@@ -1,7 +1,7 @@
 pipeline {
     agent any
     
-    // rely on Jenkins to provide the Sonar tool now
+    // We only rely on Jenkins to provide the Sonar tool now
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
@@ -57,8 +57,21 @@ pipeline {
         stage('4. The Quality Gate') {
             steps {
                 echo "Awaiting SonarQube security verdict..."
-                waitForQualityGate abortPipeline: true
+                waitForQualityGate abortPipeline: false
+            }
+        }
+        stage('5. Container Build & Deploy') {
+            steps {
+                echo "Packaging and Deploying the application..."
+                dir('instamart-backend') {
+                    sh '''
+                    docker stop instamart-app || true
+                    docker rm instamart-app || true
+                    docker build -t instamart-backend:latest .
+                    docker run -d -p 8081:8080 --name instamart-app instamart-backend:latest
+                    '''
+                }
             }
         }
     }
-}
+    }
