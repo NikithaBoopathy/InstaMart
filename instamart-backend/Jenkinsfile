@@ -1,0 +1,64 @@
+pipeline {
+    agent any
+    
+    // rely on Jenkins to provide the Sonar tool now
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
+        PATH = "${JAVA_HOME}/bin:${env.PATH}"
+    }
+
+    stages {
+        stage('1. Checkout Code') {
+            steps {
+                echo "Pulling Spring Boot backend code from Git..."
+                git branch: 'main', url: 'https://github.com/NikithaBoopathy/InstaMart.git'
+            }
+        }
+        
+        stage('2. Build & Compile') {
+            steps {
+                echo "Compiling the application natively..."
+                dir('instamart-backend') {
+                    // SRE Diagnostics (These will just work now)
+                    sh 'java -version'
+                    sh 'javac -version'
+                    sh 'mvn -version'
+                    
+                    // The actual build
+                    sh 'mvn clean package -DskipTests'
+                }
+            }
+        }
+        stage('Debug') {
+    steps {
+        script {
+            def scannerHome = tool 'sonar-scanner'
+            echo "SCANNER_HOME=${scannerHome}"
+        }
+    }
+}
+        stage('3. Static Security Scan (SAST)') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    echo "Executing deep security analysis..."
+                    dir('instamart-backend') {
+                        sh '''
+                        $SCANNER_HOME/bin/sonar-scanner \
+                          -Dsonar.projectKey=instamart-backend \
+                          -Dsonar.projectName="Instamart Backend" \
+                          -Dsonar.java.binaries=target/classes
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('4. The Quality Gate') {
+            steps {
+                echo "Awaiting SonarQube security verdict..."
+                waitForQualityGate abortPipeline: true
+            }
+        }
+    }
+}
