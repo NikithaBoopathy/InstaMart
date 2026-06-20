@@ -1,0 +1,129 @@
+pipeline {
+    agent any
+
+    environment {
+        SSM_PARAM_NAME = '/instamart/dev/database/credentials'
+        AWS_REGION     = 'us-east-1' 
+        IMAGE_NAME     = 'instamart-backend:latest'
+        // Define your nested application directory here
+        APP_DIR        = 'instamart-backend' 
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                echo 'Checking out source code...'
+                git branch: 'main', 
+                    credentialsId: 'github-token', 
+                    url: 'https://github.com/nikithaboopathy/instamart.git'
+            }
+        }
+
+        stage('Build & Unit Test') {
+            steps {
+                // Step into the subfolder before running Maven
+                dir("${APP_DIR}") {
+                    echo 'Building Spring Boot application with Maven...'
+                    sh 'mvn clean package'
+                }
+            }
+        }
+
+        stage('Static Code Analysis (SonarQube)') {
+            environment {
+                SCANNER_HOME = tool 'sonar-scanner'
+            }
+            steps {
+                // Step into the subfolder for accurate code analysis
+                dir("${APP_DIR}") {
+                    withSonarQubeEnv('sonar-server') {
+                        sh '''
+                            $SCANNER_HOME/bin/sonar-scanner \
+                            -Dsonar.projectKey=instamart-backend \
+                            -Dsonar.java.binaries=target/classes
+                        '''
+                    }
+                }
+            }
+        }
+
+     //   stage('Security Scan (Trivy)') {
+      //      steps {
+                // Step into the subfolder to scan the actual application files
+        //        dir("${APP_DIR}") {
+          //          echo 'Running Trivy vulnerability scanner...'
+                    // We map the current working directory $(pwd) to the container to scan the subfolder
+            //        sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/workspace -w /workspace aquasec/trivy fs --exit-code 0 --severity HIGH,CRITICAL .'
+              //  }
+            //}
+        //}
+        // TEMPORARILY DISABLED TO BYPASS MAVEN CENTRAL RATE LIMIT
+   /*     stage('Security Scan (Trivy)') {
+           steps {
+             dir("${APP_DIR}") {
+               echo 'Running Trivy vulnerability scanner...'
+        // We map the Jenkins host's Maven cache ($HOME/.m2) directly into the Trivy container (/root/.m2)
+              sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $HOME/.m2:/root/.m2 -v $(pwd):/workspace -w /workspace aquasec/trivy fs --exit-code 0 --severity HIGH,CRITICAL .'
+         }
+}
+}*/
+
+        stage('Secure Credential Fetch (SSM)') {
+            steps {
+                script {
+                    echo 'Authenticating via IAM Instance Profile to fetch DB secrets...'
+                    
+                    def secretJson = sh(
+                        script: "aws ssm get-parameter --region ${AWS_REGION} --name ${SSM_PARAM_NAME} --with-decryption --query 'Parameter.Value' --output text",
+                        returnStdout: true
+                    ).trim()
+
+                    def dbCredentials = readJSON text: secretJson
+
+                    env.DB_URL  = dbCredentials.spring_url
+                    env.DB_USER = dbCredentials.username
+                    env.DB_PASS = dbCredentials.password
+                }
+            }
+        }
+
+        stage('Build & Deploy Docker Image') {
+            steps {
+                // Step into the subfolder because that is where the Dockerfile lives
+                dir("${APP_DIR}") {
+                    echo 'Packaging application into a Docker container...'
+                    sh "docker build -t ${IMAGE_NAME} ."
+                    
+                    echo 'Deploying application to local Docker Engine...'
+                    script {
+                        sh 'docker stop instamart-backend || true'
+                        sh 'docker rm instamart-backend || true'
+                        
+                        sh """
+                            docker run -d -p 8081:8080 \
+                            --name instamart-backend \
+                            -e SPRING_DATASOURCE_URL="${DB_URL}" \
+                            -e SPRING_DATASOURCE_USERNAME="${DB_USER}" \
+                            -e SPRING_DATASOURCE_PASSWORD="${DB_PASS}" \
+                            -e SPRING_JPA_HIBERNATE_DDL_AUTO="update" \
+                            ${IMAGE_NAME}
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline execution complete.'
+            cleanWs()
+        }
+        success {
+            echo 'Deployment Successful! The application is connected to the secure RDS vault.'
+        }
+        failure {
+            echo 'Pipeline failed. Check the logs for exact stage failure.'
+        }
+    }
+}
