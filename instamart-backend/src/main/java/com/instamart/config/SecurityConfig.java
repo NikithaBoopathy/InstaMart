@@ -29,6 +29,7 @@ public class SecurityConfig {
             .cors(c -> c.configurationSource(corsConfigurationSource()))
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(a -> a
+			    .requestMatchers("/actuator/**").permitAll() // <-- ALLOWS AWS ALB HEALTH CHECKS
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/api/categories/**", "/api/products/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
