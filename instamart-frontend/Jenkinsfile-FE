@@ -1,0 +1,46 @@
+pipeline {
+    agent any
+
+    environment {
+        // Replace with your actual frontend S3 bucket name from your new Terraform output
+        S3_BUCKET = 'instamart-frontend-u7a8xo' 
+    }
+
+    tools {
+        nodejs 'NodeJS' // Must match the name configured in Jenkins Tools
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                // Replace with your actual frontend GitHub repo URL and branch
+                git branch: 'main', url: 'https://github.com/nikithaboopathy/instamart.git'
+            }
+        }
+        stage('Install Dependencies') {
+            steps {
+                dir('instamart-frontend'){
+                sh 'npm install'
+                }
+            }
+        }
+
+        stage('Build Static Files') {
+            steps {
+                dir('instamart-frontend'){
+                // Compiles the React app into an optimized 'dist' or 'build' folder
+                sh 'npm run build' 
+                }
+            }
+        }
+
+        stage('Deploy to AWS S3') {
+            steps {
+                dir('instamart-frontend'){
+                // Syncs the compiled folder directly to your S3 bucket and removes old files
+                sh 'aws s3 sync dist/ s3://${S3_BUCKET} --delete'
+                }
+            }
+        }
+    }
+}
